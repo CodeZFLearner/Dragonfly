@@ -6,6 +6,7 @@ import java.util.Map;
 
 @Data
 public class StandardRecord {
+    private String sourceType;    // 数据来源类型（如：SINA_REPORT）
     private String sourceId;      // 来源标识
     private long timestamp;       // 采集时间
     private String data;
