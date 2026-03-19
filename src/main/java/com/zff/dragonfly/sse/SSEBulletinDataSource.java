@@ -56,7 +56,7 @@ public class SSEBulletinDataSource extends AbstractDataSource {
 
     public static void main(String[] args) {
         // 示例：抓取贵州茅台 2023 年的公告
-        QueryParams params = QueryParams.create()
+        QueryParams params = QueryParams.builder()
                 .securityCode("600009")
 //                .startDate("2026-01-01")
 //                .endDate("2026-03-19")
@@ -243,6 +243,7 @@ public class SSEBulletinDataSource extends AbstractDataSource {
     // ==========================================================
 
     @Data
+    @Builder
     public static class QueryParams {
         // 字段定义
         private String securityCode;
@@ -253,100 +254,5 @@ public class SSEBulletinDataSource extends AbstractDataSource {
         private int pageNo = 1;
         private int pageSize = 25;
         private int maxPages = 1;
-
-        /**
-         * 入口：创建一个新实例
-         */
-        public static QueryParams create() {
-            return new QueryParams();
-        }
-
-        // --- 链式设置方法 (全部返回 this) ---
-
-        public QueryParams securityCode(String securityCode) {
-            this.securityCode = securityCode;
-            return this;
-        }
-
-        public QueryParams startDate(String startDate) {
-            this.startDate = startDate;
-            return this;
-        }
-
-        public QueryParams endDate(String endDate) {
-            this.endDate = endDate;
-            return this;
-        }
-
-        public QueryParams bulletinTypes(String bulletinTypes) {
-            if (bulletinTypes != null) {
-                this.bulletinTypes = bulletinTypes;
-            }
-            return this;
-        }
-
-        public QueryParams stockType(String stockType) {
-            if (stockType != null) {
-                this.stockType = stockType;
-            }
-            return this;
-        }
-
-        public QueryParams pageNo(int pageNo) {
-            this.pageNo = pageNo;
-            return this;
-        }
-
-        public QueryParams pageSize(int pageSize) {
-            this.pageSize = pageSize;
-            return this;
-        }
-
-        public QueryParams maxPages(int maxPages) {
-            this.maxPages = maxPages;
-            return this;
-        }
-
-        /**
-         * 【核心】构建/校验方法
-         * 调用此方法后，对象才被认为是“准备就绪”的
-         */
-        public QueryParams build() {
-            String DATE_FORMAT = "yyyy-MM-dd";
-            // --- 1. 处理并校验 endDate ---
-            if (this.endDate == null || this.endDate.trim().isEmpty()) {
-                // 默认值：今天，强制格式化为 yyyy-MM-dd
-                this.endDate = DateUtil.format(DateUtil.date(), DATE_FORMAT);
-            }
-
-            // --- 2. 处理并校验 startDate ---
-            if (this.startDate == null || this.startDate.trim().isEmpty()) {
-                // 默认值：endDate 往前推 3 个月
-                try {
-                    var endDt = DateUtil.parse(this.endDate, DATE_FORMAT);
-                    var startDt = DateUtil.offsetMonth(endDt, -3);
-                    this.startDate = DateUtil.format(startDt, DATE_FORMAT);
-                } catch (Exception e) {
-                    throw new IllegalArgumentException("计算默认开始日期失败，结束日期格式异常: " + this.endDate, e);
-                }
-            }
-
-            // --- 3. 逻辑校验：开始时间不能晚于结束时间 ---
-            try {
-                long startMillis = DateUtil.parse(this.startDate, DATE_FORMAT).getTime();
-                long endMillis = DateUtil.parse(this.endDate, DATE_FORMAT).getTime();
-
-                if (startMillis > endMillis) {
-                    throw new IllegalArgumentException(
-                            String.format("开始日期 (%s) 不能晚于结束日期 (%s)", this.startDate, this.endDate)
-                    );
-                }
-            } catch (DateException e) {
-                // 理论上前面校验过不会走到这里，但作为双重保险
-                throw new IllegalArgumentException("日期比较时发生解析错误: " + e.getMessage(), e);
-            }
-
-            return this;
-        }
     }
 }
