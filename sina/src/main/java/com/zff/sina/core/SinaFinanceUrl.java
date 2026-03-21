@@ -1,4 +1,4 @@
-package com.zff.sina;
+package com.zff.sina.core;
 
 import lombok.Builder;
 import lombok.Getter;

@@ -13,7 +13,8 @@ public abstract class AbstractDataSource {
         this.sink = sink;
     }
     // 模板方法：定义流程
-    public final void run() {
+    public final List<StandardRecord> run() {
+        List<StandardRecord> result = null;
         long start = System.currentTimeMillis();
         try {
 
@@ -21,7 +22,7 @@ public abstract class AbstractDataSource {
             List<StandardRecord> records = doFetch();
             // 3. 写入下游 (调用 Sink)
             sink.init();
-            sink.transform(records);
+            result = sink.transform(records);
             // 【监控埋点】成功
 //            MetricsCollector.recordSuccess(records.size(), System.currentTimeMillis() - start);
 
@@ -32,6 +33,7 @@ public abstract class AbstractDataSource {
         }finally {
             sink.close();
         }
+        return result;
     }
 
     // 子类只需关注具体怎么取数据

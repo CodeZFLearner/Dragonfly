@@ -1,4 +1,4 @@
-package com.zff.sina;
+package com.zff.sina.core;
 
 import java.util.Collections;
 import java.util.HashMap;
@@ -23,6 +23,14 @@ public class FinanceFieldConfig {
         }
         public String getSourceCode() {
             return sourceCode;
+        }
+        public static ReportType getBySourceCode(String sourceCode) {
+            for (ReportType type : values()) {
+                if (type.getSourceCode().equals(sourceCode)) {
+                    return type;
+                }
+            }
+            return null;
         }
     }
 

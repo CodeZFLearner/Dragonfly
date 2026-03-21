@@ -1,4 +1,4 @@
-package com.zff.sina;
+package com.zff.sina.core;
 
 import cn.hutool.http.HttpUtil;
 import cn.hutool.json.JSONArray;

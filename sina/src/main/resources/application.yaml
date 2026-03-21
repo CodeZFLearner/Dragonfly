@@ -1,0 +1,16 @@
+springdoc:
+  # 1. 是否开启 Swagger 文档功能 (默认 true，生产环境建议关闭)
+  api-docs:
+    enabled: true
+    # 自定义 API 文档 JSON 访问路径 (默认 /v3/api-docs)
+    path: /v3/api-docs
+  swagger-ui:
+    enabled: true
+    # 自定义 Swagger UI 访问路径 (默认 /swagger-ui.html)
+    path: /swagger-ui.html
+    # 是否显示展开所有接口 (默认 false)
+    operations-sorter: alpha
+    # 标签排序
+    tags-sorter: alpha
+    # 尝试点击 "Try it out" 按钮
+    try-it-out-enabled: true

@@ -1,10 +1,8 @@
-package com.zff.sina;
+package com.zff.sina.core;
 
 
 import com.zff.core.datasink.DataSink;
 import com.zff.core.datasink.impl.PrintSink;
-
-import java.util.List;
 
 public class KeyReportDataSource extends AbstractSinaReportDataSource {
 
