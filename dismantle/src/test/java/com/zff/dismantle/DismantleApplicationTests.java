@@ -3,10 +3,16 @@ package com.zff.dismantle;
 import com.zff.dismantle.chunk.Chunk;
 import com.zff.dismantle.chunk.SemanticChunker;
 import com.zff.dismantle.chunk.FixedLengthChunker;
+import org.apache.pdfbox.Loader;
+import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.text.PDFTextStripper;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 
+import java.io.File;
+import java.io.IOException;
+import java.util.ArrayList;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -82,5 +88,54 @@ class DismantleApplicationTests {
     void testShortText() {
         List<Chunk> chunks = semanticChunker.chunk("这是一段短文本。");
         assertEquals(1, chunks.size());
+    }
+
+    public static List<String> extractTextByPage(File pdfFile) throws IOException {
+        List<String> pagesContent = new ArrayList<>();
+        try (PDDocument document = Loader.loadPDF(pdfFile)) {
+            int totalPages = document.getNumberOfPages();
+            PDFTextStripper stripper = new PDFTextStripper();
+
+            for (int i = 1; i <= totalPages; i++) {
+                stripper.setStartPage(i);
+                stripper.setEndPage(i);
+                String text = stripper.getText(document).trim();
+                if (!text.isEmpty()) {
+                    pagesContent.add(text);
+                }
+            }
+        }
+        return pagesContent;
+    }
+
+    @Test
+    void pdf(){
+        File pdfFile = new File("C:\\Users\\20595\\Desktop\\601689_20260324_GA6O.pdf");
+        if (!pdfFile.exists()) {
+            System.err.println("文件不存在: " + pdfFile.getAbsolutePath());
+            return;
+        }
+
+        try {
+            System.out.println("📄 正在读取 PDF: " + pdfFile.getName());
+
+            // 方案 A: 读取全文
+            // String fullText = extractFullText(pdfFile);
+            // System.out.println("全文长度: " + fullText.length());
+            // System.out.println("前 200 字符: " + fullText.substring(0, Math.min(200, fullText.length())));
+
+            // 方案 B: 按页读取 (推荐用于长文档)
+            List<String> pages = extractTextByPage(pdfFile);
+
+            List<Chunk> chunk = semanticChunker.chunk(String.join("\n\n", pages));
+            for (Chunk chunk1 : chunk){
+                System.out.println("标题: " + chunk1.getTitle());
+//                System.out.println("内容: " + chunk1.getContent().substring(0, Math.min(200, chunk1.getContent().length())) + "...");
+                System.out.println("----");
+            }
+        } catch (IOException e) {
+            System.err.println("读取 PDF 失败: " + e.getMessage());
+            e.printStackTrace();
+        }
     }
 }

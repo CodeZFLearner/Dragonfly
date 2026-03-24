@@ -38,7 +38,7 @@ public class SemanticChunker implements ChunkStrategy {
             int index = 0;
             int offset = 0;
             for (String section : sections) {
-                if (!section.trim().isEmpty()) {
+                if (!section.trim().isEmpty() && section.trim().length() > 50) { // Skip very short sections
                     chunks.add(createChunk(section.trim(), index++, offset));
                     offset += section.length();
                 }
@@ -244,6 +244,8 @@ public class SemanticChunker implements ChunkStrategy {
         // Extract first meaningful sentence/phrase as title
         SimpleOllamaClient ollamaClient = new SimpleOllamaClient("http://localhost:11434");
         String s = ollamaClient.nameTitle(content);
+
+        System.out.println("index " + index + ",name title:" +s);
         return s.isEmpty() ? "Segment " + (index + 1) : s;
     }
 }

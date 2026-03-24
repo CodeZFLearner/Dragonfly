@@ -35,6 +35,7 @@ public class SimpleOllamaClient {
         Map<String, Object> requestBody = Map.of(
                 "model", model,
                 "prompt", prompt,
+                "temperature", 0.2,
                 "stream", false // 关闭流式，直接返回完整结果
         );
 
@@ -59,14 +60,14 @@ public class SimpleOllamaClient {
 
     public String nameTitle(String prompt){
         try {
-            String basePrompt = "信息缺口理论:当人们意识到自己“知道”和“想知道”之间存在差距时，会产生好奇心这种“认知痒感”,一个合格的标题应满足以下标准：\n" +
+            String basePrompt = "一个合格的标题应满足以下标准：\n" +
                     "1.必须真实反映核心内容，不夸大、不误导。\n" +
                     "2.去除冗余词汇（如“关于...的报告”、“一种...的方法”），直击要害\n" +
                     "3.包含利益点、冲突点或新奇点，激发阅读欲望\n" +
                     "4.包含用户可能搜索的关键词，便于归档和查找。\n" +
-                    "这是截取的段落:\n" +
+                    "这是一段截取的段落:\n" +
                     "<content>%s</content> 为他命名一个标题, just output a title ,no others";
-            System.out.println(String.format(basePrompt, prompt));
+//            System.out.println(prompt);
             return generate("gemma2:2b", String.format(basePrompt, prompt));
         } catch (Exception e) {
             throw new RuntimeException(e);
