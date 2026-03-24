@@ -1,7 +1,3 @@
-spring:
-  application:
-    name: dismantle
-
 dismantle:
   storage:
     ttl-minutes: 60  # Session expiration time

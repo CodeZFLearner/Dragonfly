@@ -28,10 +28,10 @@ public class SinaFinanceQuery {
 
     @Schema(description = "页码", example = "1", defaultValue = "1")
     @Min(value = 1, message = "页码最小为1")
-    private Integer page;
+    private Integer page = 1;
 
     @Schema(description = "每页条数", example = "10", defaultValue = "10")
     @Min(value = 1, message = "条数最小为1")
     @Max(value = 100, message = "条数最大为100")
-    private Integer num;
+    private Integer num = 4;
 }

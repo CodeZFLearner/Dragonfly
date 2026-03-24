@@ -1,5 +1,6 @@
 package com.zff.dismantle.chunk;
 
+import com.zff.dismantle.ollama.SimpleOllamaClient;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -96,14 +97,21 @@ public class SemanticChunker implements ChunkStrategy {
 
     private List<Chunk> splitBySize(String text, int maxSize, int overlap) {
         List<Chunk> chunks = new ArrayList<>();
-        int index = 0;
+        if (text == null || text.isEmpty() || maxSize <= 0) {
+            return chunks;
+        }
+
         int start = 0;
+        int chunkIndex = 0;
 
         while (start < text.length()) {
+            // 1. 确定理论上的最大结束位置
             int end = Math.min(start + maxSize, text.length());
 
-            // Try to break at sentence boundary
+            // 2. 如果不是最后一段，尝试寻找最佳断点
             if (end < text.length()) {
+                // 在 [start, end] 范围内寻找标点
+                // 注意：lastIndexOf 的第二个参数是包含的，所以直接用 end
                 int lastPeriod = text.lastIndexOf('.', end);
                 int lastExclamation = text.lastIndexOf('!', end);
                 int lastQuestion = text.lastIndexOf('?', end);
@@ -112,20 +120,41 @@ public class SemanticChunker implements ChunkStrategy {
                 int breakPoint = Math.max(Math.max(lastPeriod, lastExclamation),
                         Math.max(lastQuestion, lastNewline));
 
-                if (breakPoint > start + maxSize / 2) {
-                    end = breakPoint + 1;
+                // 只有当找到的标点位置足够靠后（避免切分出太短的片段）才采用
+                // 阈值设为 start + maxSize * 0.2 可能比 0.5 更灵活，避免被迫切分长句
+                if (breakPoint > start && breakPoint >= start + (maxSize / 3)) {
+                    end = breakPoint + 1; // 包含标点
                 }
             }
 
-            String segment = text.substring(start, end).trim();
-            if (!segment.isEmpty()) {
-                chunks.add(createChunk(segment, index++, start));
+            // 3. 提取片段 (暂时不 trim，保留原始索引对应关系，或在 createChunk 内部处理)
+            String segment = text.substring(start, end);
+
+            // 如果片段全是空格，跳过（防止死循环，虽然上面逻辑很难产生全空格）
+            if (!segment.trim().isEmpty()) {
+                chunks.add(createChunk(segment.trim(), chunkIndex++, start));
             }
 
-            start = end - overlap;
-            if (start >= text.length()) {
+            // 4. 计算下一个 start
+            // 如果已经到达末尾，直接退出，避免生成纯重叠的尾部片段
+            if (end >= text.length()) {
                 break;
             }
+
+            // 核心优化：下一个起点 = 当前终点 - 重叠量
+            int nextStart = end - overlap;
+
+            // 安全检查：防止死循环（如果 overlap >= 有效长度，必须强制前进）
+            if (nextStart <= start) {
+                // 极端情况：找不到标点且 overlap 太大，或者句子极短
+                // 强制向前移动，至少移动 1 个字符，或者移动 maxSize 的一半
+                nextStart = start + Math.max(1, maxSize / 2);
+            }
+
+            // 额外优化：尝试让下一个片段的开始也落在句子边界上（可选）
+            // 如果 nextStart 落在单词中间，可以稍微调整，但这会增加复杂度，暂保持简单
+
+            start = nextStart;
         }
 
         return chunks;
@@ -211,18 +240,10 @@ public class SemanticChunker implements ChunkStrategy {
     }
 
     private String generateTitle(String content, int index) {
+        //todo
         // Extract first meaningful sentence/phrase as title
-        String firstLine = content.split("\\n")[0].trim();
-
-        if (firstLine.length() > 50) {
-            firstLine = firstLine.substring(0, 47) + "...";
-        }
-
-        // If starts with heading pattern, use it
-        if (firstLine.startsWith("#")) {
-            return firstLine.replace("#", "").trim();
-        }
-
-        return firstLine.isEmpty() ? "Segment " + (index + 1) : firstLine;
+        SimpleOllamaClient ollamaClient = new SimpleOllamaClient("http://localhost:11434");
+        String s = ollamaClient.nameTitle(content);
+        return s.isEmpty() ? "Segment " + (index + 1) : s;
     }
 }
