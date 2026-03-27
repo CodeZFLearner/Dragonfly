@@ -1,19 +1,38 @@
 package com.zff.dismantle.chunk;
 
+import com.zff.dismantle.core.ChunkLevel;
+import com.zff.dismantle.core.DisclosureLevel;
+import com.zff.dismantle.core.Document;
+import com.zff.dismantle.core.HierarchicalChunk;
 import com.zff.dismantle.ollama.SimpleOllamaClient;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.UUID;
 import java.util.regex.Pattern;
 
 /**
  * Splits text by semantic boundaries (paragraphs, sections).
  * Best for documents with natural structure.
+ *
+ * <p>This enhanced version implements {@link HierarchicalChunkStrategy} for
+ * progressive disclosure support. It builds hierarchical chunk structures:
+ *
+ * <ul>
+ *   <li>Level 1 headings → SECTION level chunks</li>
+ *   <li>Level 2-3 headings → SUBSECTION level chunks</li>
+ *   <li>Paragraphs within sections → PARAGRAPH level chunks</li>
+ * </ul>
+ *
+ * <h2>Chunking Strategy</h2>
+ * <ol>
+ *   <li>First, split by section headings (Markdown, numbered, Chinese style)</li>
+ *   <li>If no clear sections, split by paragraphs</li>
+ *   <li>If still too few chunks, split by fixed size with sentence-aware boundaries</li>
+ * </ol>
  */
 @Component
-public class SemanticChunker implements ChunkStrategy {
+public class SemanticChunker implements HierarchicalChunkStrategy {
 
     // Common section/paragraph separators
     private static final Pattern SECTION_PATTERN = Pattern.compile(
@@ -26,31 +45,190 @@ public class SemanticChunker implements ChunkStrategy {
             Pattern.MULTILINE
     );
 
+    private final SimpleOllamaClient ollamaClient;
+
+    public SemanticChunker() {
+        this.ollamaClient = new SimpleOllamaClient("http://localhost:11434");
+    }
+
     @Override
-    public List<Chunk> chunk(String text) {
-        List<Chunk> chunks = new ArrayList<>();
+    public String getName() {
+        return "semantic";
+    }
 
-        // First try to split by sections (headings)
-        List<String> sections = splitBySections(text);
+    @Override
+    public int getPriority() {
+        return 50; // Medium priority
+    }
 
-        if (sections.size() >= 2) {
-            // Has clear section structure
-            int index = 0;
-            int offset = 0;
-            for (String section : sections) {
-                if (!section.trim().isEmpty() && section.trim().length() > 50) { // Skip very short sections
-                    chunks.add(createChunk(section.trim(), index++, offset));
-                    offset += section.length();
-                }
-            }
-        } else {
-            // Fall back to paragraph-based splitting
-            chunks = splitByParagraphs(text);
+    @Override
+    public Document analyze(String text) {
+        if (text == null || text.isBlank()) {
+            return Document.of("");
         }
 
-        // If still too few chunks, split by fixed size
-        if (chunks.size() < 2 && text.length() > 500) {
-            return splitBySize(text, 1000, 100);
+        Document document = Document.of(text);
+        List<SectionInfo> sections = findSections(text);
+
+        if (sections.isEmpty()) {
+            // No clear structure, treat as single section with paragraph chunks
+            List<HierarchicalChunk> paragraphChunks = splitByParagraphsHierarchical(text);
+            for (HierarchicalChunk chunk : paragraphChunks) {
+                document.addChunk(chunk);
+            }
+            return document;
+        }
+
+        // Build hierarchical structure
+        buildHierarchicalStructure(document, text, sections);
+
+        return document;
+    }
+
+    @Override
+    public List<HierarchicalChunk> chunk(String text) {
+        Document document = analyze(text);
+        return new ArrayList<>(document.getChunks().values());
+    }
+
+    @Override
+    public List<HierarchicalChunk> chunk(String text, DisclosureLevel disclosureLevel) {
+        List<HierarchicalChunk> chunks = chunk(text);
+        return switch (disclosureLevel) {
+            case OUTLINE -> chunks.stream().map(HierarchicalChunk::toOutlineView).toList();
+            case SUMMARY -> chunks.stream().map(HierarchicalChunk::toSummaryView).toList();
+            case EXPANDED -> chunks.stream().map(HierarchicalChunk::toExpandedView).toList();
+            case FULL -> chunks.stream().map(HierarchicalChunk::toFullView).toList();
+        };
+    }
+
+    /**
+     * Finds all sections in the text with their boundaries.
+     */
+    private List<SectionInfo> findSections(String text) {
+        List<SectionInfo> sections = new ArrayList<>();
+        String[] lines = text.split("\\n");
+
+        StringBuilder currentSection = new StringBuilder();
+        int sectionStart = 0;
+        int currentPos = 0;
+        String currentHeading = null;
+        ChunkLevel currentLevel = ChunkLevel.PARAGRAPH;
+
+        for (String line : lines) {
+            if (isHeading(line)) {
+                // Save previous section if exists
+                if (currentSection.length() > 0) {
+                    sections.add(new SectionInfo(
+                            currentHeading,
+                            currentLevel,
+                            sectionStart,
+                            currentPos,
+                            currentSection.toString().trim()
+                    ));
+                }
+                // Start new section
+                currentHeading = line.trim();
+                currentLevel = determineHeadingLevel(line);
+                sectionStart = currentPos;
+                currentSection = new StringBuilder(line);
+            } else {
+                currentSection.append("\n").append(line);
+            }
+            currentPos += line.length() + 1;
+        }
+
+        // Add final section
+        if (currentSection.length() > 0) {
+            sections.add(new SectionInfo(
+                    currentHeading,
+                    currentLevel,
+                    sectionStart,
+                    currentPos,
+                    currentSection.toString().trim()
+            ));
+        }
+
+        // Filter out very short sections
+        return sections.stream()
+                .filter(s -> s.content.length() > 50)
+                .toList();
+    }
+
+    /**
+     * Builds hierarchical chunk structure from sections.
+     */
+    private void buildHierarchicalStructure(Document document, String text, List<SectionInfo> sections) {
+        HierarchicalChunk currentParent = null;
+
+        for (int i = 0; i < sections.size(); i++) {
+            SectionInfo section = sections.get(i);
+            String chunkId = String.format("sec_%03d", i);
+
+            // Determine if this is a parent (SECTION) or child (SUBSECTION/PARAGRAPH)
+            if (section.level == ChunkLevel.SECTION) {
+                // This is a top-level section
+                HierarchicalChunk sectionChunk = HierarchicalChunk.builder()
+                        .id(chunkId)
+                        .title(extractTitle(section.heading))
+                        .level(section.level)
+                        .content(null) // Lazy load
+                        .startOffset(section.startOffset)
+                        .endOffset(section.endOffset)
+                        .charCount(section.content.length())
+                        .build();
+
+                document.addChunk(sectionChunk);
+                currentParent = sectionChunk;
+            } else {
+                // This is a subsection or paragraph
+                String parentId = currentParent != null ? currentParent.getId() : null;
+
+                HierarchicalChunk childChunk = HierarchicalChunk.builder()
+                        .id(chunkId)
+                        .title(extractTitle(section.heading))
+                        .level(section.level)
+                        .content(null) // Lazy load
+                        .parentId(parentId)
+                        .startOffset(section.startOffset)
+                        .endOffset(section.endOffset)
+                        .charCount(section.content.length())
+                        .build();
+
+                if (currentParent != null) {
+                    currentParent.addChildId(chunkId);
+                }
+
+                document.addChunk(childChunk);
+            }
+        }
+    }
+
+    /**
+     * Splits text into hierarchical paragraph chunks.
+     */
+    private List<HierarchicalChunk> splitByParagraphsHierarchical(String text) {
+        List<HierarchicalChunk> chunks = new ArrayList<>();
+        String[] paragraphs = PARAGRAPH_PATTERN.split(text);
+
+        int index = 0;
+        int offset = 0;
+        for (String para : paragraphs) {
+            if (!para.trim().isEmpty()) {
+                String title = generateTitle(para, index);
+                HierarchicalChunk chunk = HierarchicalChunk.builder()
+                        .id(generateId(index))
+                        .title(title)
+                        .level(ChunkLevel.PARAGRAPH)
+                        .content(para.trim())
+                        .startOffset(offset)
+                        .endOffset(offset + para.length())
+                        .charCount(para.length())
+                        .build();
+                chunks.add(chunk);
+                offset += para.length() + 2; // +2 for \n\n
+                index++;
+            }
         }
 
         return chunks;
@@ -105,13 +283,9 @@ public class SemanticChunker implements ChunkStrategy {
         int chunkIndex = 0;
 
         while (start < text.length()) {
-            // 1. 确定理论上的最大结束位置
             int end = Math.min(start + maxSize, text.length());
 
-            // 2. 如果不是最后一段，尝试寻找最佳断点
             if (end < text.length()) {
-                // 在 [start, end] 范围内寻找标点
-                // 注意：lastIndexOf 的第二个参数是包含的，所以直接用 end
                 int lastPeriod = text.lastIndexOf('.', end);
                 int lastExclamation = text.lastIndexOf('!', end);
                 int lastQuestion = text.lastIndexOf('?', end);
@@ -120,39 +294,25 @@ public class SemanticChunker implements ChunkStrategy {
                 int breakPoint = Math.max(Math.max(lastPeriod, lastExclamation),
                         Math.max(lastQuestion, lastNewline));
 
-                // 只有当找到的标点位置足够靠后（避免切分出太短的片段）才采用
-                // 阈值设为 start + maxSize * 0.2 可能比 0.5 更灵活，避免被迫切分长句
                 if (breakPoint > start && breakPoint >= start + (maxSize / 3)) {
-                    end = breakPoint + 1; // 包含标点
+                    end = breakPoint + 1;
                 }
             }
 
-            // 3. 提取片段 (暂时不 trim，保留原始索引对应关系，或在 createChunk 内部处理)
             String segment = text.substring(start, end);
 
-            // 如果片段全是空格，跳过（防止死循环，虽然上面逻辑很难产生全空格）
             if (!segment.trim().isEmpty()) {
                 chunks.add(createChunk(segment.trim(), chunkIndex++, start));
             }
 
-            // 4. 计算下一个 start
-            // 如果已经到达末尾，直接退出，避免生成纯重叠的尾部片段
             if (end >= text.length()) {
                 break;
             }
 
-            // 核心优化：下一个起点 = 当前终点 - 重叠量
             int nextStart = end - overlap;
-
-            // 安全检查：防止死循环（如果 overlap >= 有效长度，必须强制前进）
             if (nextStart <= start) {
-                // 极端情况：找不到标点且 overlap 太大，或者句子极短
-                // 强制向前移动，至少移动 1 个字符，或者移动 maxSize 的一半
                 nextStart = start + Math.max(1, maxSize / 2);
             }
-
-            // 额外优化：尝试让下一个片段的开始也落在句子边界上（可选）
-            // 如果 nextStart 落在单词中间，可以稍微调整，但这会增加复杂度，暂保持简单
 
             start = nextStart;
         }
@@ -199,27 +359,52 @@ public class SemanticChunker implements ChunkStrategy {
         }
         String trimmed = line.trim();
 
-        // Markdown headings: # Heading
         if (trimmed.startsWith("#")) {
             return true;
         }
 
-        // Chinese style headings: 第一章 xxx, 一、xxx
         if (trimmed.matches("^[第第][一二三四五六七八九十\\d]+[章部分节].*")) {
             return true;
         }
 
-        // Numbered headings: 1. xxx, 1.1 xxx
         if (trimmed.matches("^\\d+\\.\\d*\\s+.*")) {
             return true;
         }
 
-        // All caps or very short lines that look like titles
         if (trimmed.length() < 50 && trimmed.matches("^[A-Z\\u4e00-\\u9fa5].*")) {
             return true;
         }
 
         return false;
+    }
+
+    private ChunkLevel determineHeadingLevel(String line) {
+        String trimmed = line.trim();
+
+        if (trimmed.startsWith("#")) {
+            int hashCount = 0;
+            for (char c : trimmed.toCharArray()) {
+                if (c == '#') hashCount++;
+                else break;
+            }
+            if (hashCount == 1) return ChunkLevel.SECTION;
+            if (hashCount <= 3) return ChunkLevel.SUBSECTION;
+            return ChunkLevel.PARAGRAPH;
+        }
+
+        if (trimmed.matches("^[第第][一二三四五六七八九十\\d]+[章部分节].*")) {
+            return ChunkLevel.SECTION;
+        }
+
+        if (trimmed.matches("^\\d+\\.\\s+.*")) {
+            return ChunkLevel.SECTION;
+        }
+
+        if (trimmed.matches("^\\d+\\.\\d+.*")) {
+            return ChunkLevel.SUBSECTION;
+        }
+
+        return ChunkLevel.PARAGRAPH;
     }
 
     private Chunk createChunk(String content, int index, int startOffset) {
@@ -240,12 +425,56 @@ public class SemanticChunker implements ChunkStrategy {
     }
 
     private String generateTitle(String content, int index) {
-        //todo
         // Extract first meaningful sentence/phrase as title
-        SimpleOllamaClient ollamaClient = new SimpleOllamaClient("http://localhost:11434");
-        String s = ollamaClient.nameTitle(content);
+        String firstLine = content.split("\\n")[0].trim();
+        if (firstLine.length() > 80) {
+            // Try to find a natural break point
+            int breakPoint = firstLine.indexOf(' ', 60);
+            if (breakPoint > 0) {
+                firstLine = firstLine.substring(0, breakPoint) + "...";
+            } else {
+                firstLine = firstLine.substring(0, 77) + "...";
+            }
+        }
+        return firstLine.isEmpty() ? "Segment " + (index + 1) : firstLine;
+    }
 
-        System.out.println("index " + index + ",name title:" +s);
-        return s.isEmpty() ? "Segment " + (index + 1) : s;
+    private String extractTitle(String heading) {
+        if (heading == null || heading.isBlank()) {
+            return "Untitled Section";
+        }
+
+        String trimmed = heading.trim();
+
+        // Remove Markdown hashes
+        if (trimmed.startsWith("#")) {
+            trimmed = trimmed.replaceAll("^#+\\s*", "");
+        }
+
+        // Limit length
+        if (trimmed.length() > 100) {
+            trimmed = trimmed.substring(0, 97) + "...";
+        }
+
+        return trimmed;
+    }
+
+    /**
+     * Internal class to represent a section with its boundaries.
+     */
+    private static class SectionInfo {
+        final String heading;
+        final ChunkLevel level;
+        final int startOffset;
+        final int endOffset;
+        final String content;
+
+        SectionInfo(String heading, ChunkLevel level, int startOffset, int endOffset, String content) {
+            this.heading = heading;
+            this.level = level;
+            this.startOffset = startOffset;
+            this.endOffset = endOffset;
+            this.content = content;
+        }
     }
 }

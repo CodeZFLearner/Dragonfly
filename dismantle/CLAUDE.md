@@ -4,11 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**Dismantle** - LLM context retrieval utility for reducing token costs by 60-90%.
+**Dismantle** - LLM context retrieval utility with Progressive Disclosure for reducing token costs by 60-96%.
 
 **Key Principle:** Dismantle is NOT an LLM replacement. It's a preprocessing utility that helps agents retrieve relevant document chunks efficiently.
 
-Two-stage API workflow:
+**V2 Feature:** Progressive Disclosure - reveal document content incrementally to minimize token usage.
+
+### Two-stage API workflow:
 1. **POST /api/dismantle/analyze** - Split long text → return only `id + title`
 2. **POST /api/dismantle/retrieve** - User selects IDs → merge content → return `mergedText`
 
@@ -29,39 +31,81 @@ mvn spring-boot:run -f dismantle/pom.xml
 
 ## Architecture
 
+### V2 Architecture (Progressive Disclosure)
+
 ```
 com.zff.dismantle/
-├── chunk/          # Text splitting strategies
-│   ├── ChunkStrategy (interface)
-│   ├── SemanticChunker (by paragraphs/sections)
-│   └── FixedLengthChunker (by character count)
-├── storage/        # In-memory session storage with TTL
-│   ├── ChunkStore
-│   └── AnalysisSession
-├── service/        # Business logic
-│   └── DismantleService (analyze + retrieve)
-├── api/            # REST endpoints + DTOs + Swagger
-│   ├── DismantleController (OpenAPI annotated)
-│   ├── AnalyzeRequest/Response
-│   ├── ChunkSelectionRequest
-│   ├── MergedChunksResponse
-│   ├── SessionInfoResponse
-│   └── GlobalExceptionHandler
-├── config/         # OpenAPI configuration
-│   └── OpenApiConfig
-└── metrics/        # Token usage tracking
+├── core/                      # NEW: Core domain model
+│   ├── Document               # Aggregated root with hierarchical chunks
+│   ├── HierarchicalChunk      # Chunk with parent/child relationships
+│   ├── ChunkLevel             # SECTION, SUBSECTION, PARAGRAPH levels
+│   ├── ChunkMetadata          # Extensible metadata container
+│   └── DisclosureLevel        # OUTLINE, SUMMARY, EXPANDED, FULL
+│
+├── chunk/                     # Text splitting strategies
+│   ├── ChunkStrategy          # Base interface
+│   ├── HierarchicalChunkStrategy # V2 hierarchical interface
+│   ├── SemanticChunker        # Enhanced: supports hierarchical output
+│   ├── OutlineChunker         # NEW: extract only document structure
+│   └── FixedLengthChunker     # Fixed-size chunking
+│
+├── enrichment/                # NEW: Content enrichment layer
+│   ├── TitleGenerator         # Title generation interface
+│   ├── SummaryGenerator       # Summary generation interface
+│   ├── RuleBasedTitleGenerator # Fast rule-based titles
+│   ├── LlmTitleGenerator      # LLM-generated titles (Ollama)
+│   ├── RuleBasedSummaryGenerator # Rule-based summaries
+│   └── LlmSummaryGenerator    # LLM-generated summaries
+│
+├── retrieval/                 # NEW: Search and retrieval
+│   ├── Retriever              # Retrieval strategy interface
+│   ├── KeywordRetriever       # BM25-style keyword matching
+│   └── HybridRetriever        # Combined keyword + semantic (future)
+│
+├── storage/                   # Session storage
+│   ├── ChunkStore             # In-memory storage with TTL
+│   └── AnalysisSession        # Enhanced: supports V2 document references
+│
+├── service/                   # Business logic
+│   ├── DismantleService       # V1 service (backward compatible)
+│   └── DismantleServiceV2     # NEW: Progressive disclosure service
+│
+├── api/                       # REST endpoints
+│   ├── dto/                   # NEW: V2 DTOs
+│   │   ├── AnalyzeRequestV2
+│   │   ├── AnalyzeResponseV2
+│   │   ├── RetrieveRequestV2
+│   │   ├── RetrieveResponseV2
+│   │   ├── QueryRequestV2
+│   │   ├── QueryResponseV2
+│   │   ├── ChunkViewV2
+│   │   └── ExpandRequestV2
+│   ├── DismantleController    # V1 endpoints (backward compatible)
+│   ├── DismantleControllerV2  # NEW: V2 endpoints
+│   └── exception/             # NEW: Centralized exception handling
+│       └── GlobalExceptionHandler
+│
+├── config/                    # Configuration
+│   ├── OpenApiConfig          # Swagger/OpenAPI configuration
+│   └── DismantleProperties    # NEW: YAML configuration binding
+│
+└── metrics/                   # Token usage tracking
     └── TokenMetrics
 ```
 
 ## Key Design Decisions
 
-- **Token Efficiency**: Stage A response exposes ONLY `id + title`, never full content
-- **Session-based**: Chunks stored server-side with TTL (60 min default)
-- **No LLM Dependency**: Dismantle does NOT call any LLM - it's a pure retrieval utility
-- **Semantic Chunking**: Prefers natural boundaries (headings, paragraphs)
+- **Progressive Disclosure**: V2 API reveals content incrementally (OUTLINE → SUMMARY → EXPANDED → FULL)
+- **Token Efficiency**: OUTLINE level uses only ~5% tokens vs full document
+- **Hierarchical Chunking**: Supports SECTION → SUBSECTION → PARAGRAPH structure
+- **Pluggable Strategies**: Easy to add new chunking, title, and retrieval strategies
+- **Backward Compatible**: V1 API continues to work for existing clients
+- **No LLM Dependency**: Core functionality works without LLM; LLM features are optional enhancements
 - **Swagger First**: All endpoints fully documented with OpenAPI 3.0 annotations
 
 ## API Endpoints
+
+### V1 API (Backward Compatible)
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -69,6 +113,17 @@ com.zff.dismantle/
 | POST | /api/dismantle/retrieve | Stage B: Retrieve and merge selected chunks |
 | GET | /api/dismantle/session/{id} | Get session info (titles only) |
 | DELETE | /api/dismantle/session/{id} | Delete session |
+
+### V2 API (Progressive Disclosure)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | /api/dismantle/v2/analyze | Analyze with disclosure level (OUTLINE/SUMMARY/EXPANDED/FULL) |
+| POST | /api/dismantle/v2/retrieve | Retrieve with auto-expand children support |
+| GET | /api/dismantle/v2/session/{id}/expand/{chunkId} | Expand specific chunk to higher detail level |
+| POST | /api/dismantle/v2/query | Search within document by keywords |
+| GET | /api/dismantle/v2/session/{id} | Get session info with disclosure level |
+| DELETE | /api/dismantle/v2/session/{id} | Delete session |
 
 ## Swagger / OpenAPI
 
@@ -87,6 +142,23 @@ All endpoints include:
 dismantle:
   storage:
     ttl-minutes: 60
+    backend: memory          # memory (redis for future)
+  chunking:
+    default-strategy: semantic  # semantic, outline, fixed
+    semantic:
+      min-section-length: 50
+      enable-hierarchical: true
+  enrichment:
+    title-generator: rule-based   # rule-based or llm
+    summary-generator: rule-based # rule-based or llm
+    llm:
+      provider: ollama
+      endpoint: http://localhost:11434
+      model: qwen2.5:7b
+  retrieval:
+    default-strategy: keyword   # keyword, semantic, hybrid
+    max-results: 10
+    min-score: 0.3
   openapi:
     server-url: http://localhost:8080
 ```
@@ -95,35 +167,57 @@ dismantle:
 
 Tracked in every response:
 - `originalTokens`: Estimated tokens in full original text
-- `processedTokens`: Actual tokens in merged text (selected chunks only)
-- `savings`: Percentage saved (e.g., "60%")
+- `processedTokens`: Actual tokens returned (varies by disclosure level)
+- `savings`: Percentage saved (e.g., "95%" for OUTLINE level)
 - `chunksSelected`: Number of chunks merged
 - `totalChunks`: Total chunks available
 
+### Token Savings by Disclosure Level
+
+| Level | Content | Typical Token Usage |
+|-------|---------|---------------------|
+| OUTLINE | ID + Title only | ~5% of full document |
+| SUMMARY | + Summary + Keywords | ~15% of full document |
+| EXPANDED | + Children + Metadata | ~30% of full document |
+| FULL | Complete content | 100% of selected chunks |
+
 ## LLM Agent Integration Pattern
 
+### V2 Progressive Disclosure Pattern (Recommended)
+
 ```python
-# 1. Analyze document
-response = post("/api/dismantle/analyze", {"text": long_text})
+# 1. Analyze document at OUTLINE level (minimal tokens)
+response = post("/api/dismantle/v2/analyze", {
+    "text": long_text,
+    "disclosureLevel": "OUTLINE"
+})
 session_id = response["sessionId"]
-chunks = response["chunks"]  # [{id, title}, ...]
+chunks = response["chunks"]  # Only id + title, ~5% tokens
 
-# 2. Select relevant chunks (by title or LLM recommendation)
-selected_ids = ["chunk_001", "chunk_003"]
+# 2. Agent selects relevant chunks by title
+selected_ids = llm.select_by_titles(chunks, query)
 
-# 3. Retrieve merged text
-result = post("/api/dismantle/retrieve", {
+# 3. Expand to SUMMARY level for relevance confirmation
+for chunk_id in selected_ids:
+    expanded = get(f"/api/dismantle/v2/session/{session_id}/expand/{chunk_id}",
+                   params={"targetLevel": "SUMMARY"})
+    if llm.is_relevant(expanded["summary"], query):
+        final_ids.append(chunk_id)
+
+# 4. Retrieve full content of confirmed chunks
+result = post("/api/dismantle/v2/retrieve", {
     "sessionId": session_id,
-    "chunkIds": selected_ids
+    "chunkIds": final_ids,
+    "includeChildren": True
 })
 
 merged_text = result["mergedText"]  # Use this with your LLM!
 
-# 4. Use merged text with Claude/GPT-4/etc.
+# 5. Use merged text with Claude/GPT-4/etc.
 answer = llm.generate(f"Based on: {merged_text}\n\nQuestion: {query}")
 
-# 5. (Optional) Clean up
-delete(f"/api/dismantle/session/{session_id}")
+# 6. (Optional) Clean up
+delete(f"/api/dismantle/v2/session/{session_id}")
 ```
 
 ## Documentation Files

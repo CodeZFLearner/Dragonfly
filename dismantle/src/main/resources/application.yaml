@@ -1,8 +1,38 @@
 dismantle:
+  # Storage configuration
   storage:
-    ttl-minutes: 60  # Session expiration time
+    ttl-minutes: 60           # Session expiration time
+    backend: memory           # Storage backend: memory (redis for future)
+
+  # Chunking configuration
+  chunking:
+    default-strategy: semantic  # semantic, outline, fixed
+    semantic:
+      min-section-length: 50    # Minimum section length to be valid
+      enable-hierarchical: true # Enable hierarchical chunk structure
+    fixed:
+      chunk-size: 1000          # Characters per chunk
+      overlap: 100              # Overlap between chunks
+
+  # Enrichment configuration (title/summary generation)
+  enrichment:
+    title-generator: rule-based   # rule-based or llm
+    summary-generator: rule-based # rule-based or llm
+    llm:
+      provider: ollama
+      endpoint: http://localhost:11434
+      model: qwen2.5:7b
+
+  # Retrieval configuration
+  retrieval:
+    default-strategy: keyword   # keyword, semantic (future), hybrid
+    max-results: 10
+    min-score: 0.3
+
+  # OpenAPI configuration
   openapi:
     server-url: http://localhost:8080
+
 springdoc:
   # 1. 是否开启 Swagger 文档功能 (默认 true，生产环境建议关闭)
   api-docs:
@@ -19,3 +49,7 @@ springdoc:
     tags-sorter: alpha
     # 尝试点击 "Try it out" 按钮
     try-it-out-enabled: true
+
+logging:
+  level:
+    com.zff.dismantle: DEBUG
